@@ -153,13 +153,28 @@ async def linkedin_webhook(request: Request):
 
 @app.post("/slack/interactions")
 async def slack_interactions(request: Request):
-    form_data = await request.form()
-    payload = eval(form_data.get("payload"))
+    import json
+    import logging
     
-    action = payload["actions"][0]
-    action_id = action["action_id"]
-    user = payload["user"]["username"]
-    response_url = payload["response_url"]
+    logging.basicConfig(level=logging.INFO)
+    
+    try:
+        form_data = await request.form()
+        payload_str = form_data.get("payload")
+        logging.info(f"Raw payload: {payload_str}")
+        
+        payload = json.loads(payload_str)
+        logging.info(f"Parsed payload keys: {payload.keys()}")
+        
+        action = payload["actions"][0]
+        action_id = action["action_id"]
+        user = payload["user"].get("username") or payload["user"].get("name")
+        response_url = payload["response_url"]
+        
+        logging.info(f"Action: {action_id}, User: {user}")
+    except Exception as e:
+        logging.error(f"Error parsing Slack payload: {e}")
+        return JSONResponse({"text": f"エラーが発生しました: {str(e)}"}, status_code=200)
     
     if action_id == "send_original":
         value_parts = action["value"].split("||", 1)
