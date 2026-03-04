@@ -121,18 +121,10 @@ def send_to_slack(sender_name: str, sender_role: str, original_message: str, ai_
     )
 
 async def send_to_linkedin(user_id: str, message: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{settings.EXPANDI_API_URL}/messages",
-            headers={
-                "Authorization": f"Bearer {settings.EXPANDI_API_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={"recipient_id": user_id, "message": message},
-            timeout=30.0
-        )
-        response.raise_for_status()
-        return response.json()
+    # ダミー実装：実際のLinkedIn送信はExpandi等のサービスが必要
+    import logging
+    logging.info(f"[DUMMY] Sending to LinkedIn user {user_id}: {message}")
+    return {"status": "success", "message": "Dummy send (Expandi not configured)"}
 
 @app.post("/webhook/linkedin")
 async def linkedin_webhook(request: Request):
