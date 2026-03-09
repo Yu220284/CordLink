@@ -1,0 +1,14 @@
+{
+  "name": "cordlink-linkedin-monitor",
+  "version": "1.0.0",
+  "description": "LinkedIn message monitor for CordLink",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0",
+    "node-fetch": "^2.6.7",
+    "dotenv": "^16.0.3"
+  }
+}

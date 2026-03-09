@@ -1,12 +1,18 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
 from openai import OpenAI
 import httpx
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config import settings
+import logging
+import json
+import asyncio
+from playwright.async_api import async_playwright
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 slack_client = WebClient(token=settings.SLACK_BOT_TOKEN)
@@ -14,6 +20,58 @@ openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 rate_limiter = defaultdict(list)
 MAX_MESSAGES_PER_HOUR = 10
+processed_messages = set()
+browser = None
+playwright_instance = None
+
+async def get_linkedin_messages():
+    global browser, playwright_instance
+    try:
+        if not browser:
+            if not playwright_instance:
+                playwright_instance = await async_playwright().start()
+            browser = await playwright_instance.chromium.launch(headless=True)
+            logger.info("Playwright browser initialized")
+        
+        page = await browser.new_page()
+        await page.goto("https://www.linkedin.com/login", wait_until="networkidle", timeout=30000)
+        
+        await page.fill("#username", settings.LINKEDIN_EMAIL)
+        await page.fill("#password", settings.LINKEDIN_PASSWORD)
+        await page.click("button[aria-label='Sign in']")
+        await page.wait_for_load_state("networkidle", timeout=30000)
+        
+        await page.goto("https://www.linkedin.com/messaging/", wait_until="networkidle", timeout=30000)
+        
+        messages = []
+        conversations = await page.query_selector_all("[data-test-id='conversation-item']")
+        
+        for conv in conversations[:3]:
+            try:
+                sender_name_elem = await conv.query_selector("[data-test-id='conversation-item-name']")
+                sender_text = await sender_name_elem.text_content() if sender_name_elem else "Unknown"
+                
+                message_elem = await conv.query_selector("[data-test-id='conversation-item-message']")
+                message_text = await message_elem.text_content() if message_elem else ""
+                
+                msg_id = f"{sender_text}_{message_text[:20]}"
+                if msg_id not in processed_messages and message_text:
+                    messages.append({
+                        "sender_name": sender_text,
+                        "sender_id": sender_text.replace(" ", "_"),
+                        "message": message_text,
+                        "timestamp": datetime.now()
+                    })
+                    processed_messages.add(msg_id)
+            except Exception as e:
+                logger.error(f"Error processing conversation: {e}")
+                continue
+        
+        await page.close()
+        return messages
+    except Exception as e:
+        logger.error(f"Error fetching messages: {e}")
+        return []
 
 def check_rate_limit(user_id: str) -> bool:
     now = datetime.now()
@@ -120,52 +178,41 @@ def send_to_slack(sender_name: str, sender_role: str, original_message: str, ai_
         text=f"LinkedIn新着メッセージ from {sender_name}"
     )
 
-async def send_to_linkedin(user_id: str, message: str):
-    # ダミー実装：実際のLinkedIn送信はExpandi等のサービスが必要
-    import logging
-    logging.info(f"[DUMMY] Sending to LinkedIn user {user_id}: {message}")
-    return {"status": "success", "message": "Dummy send (Expandi not configured)"}
+async def poll_linkedin():
+    while True:
+        try:
+            messages = await get_linkedin_messages()
+            for msg in messages:
+                sender_name = msg.get("sender_name", "Unknown")
+                message = msg.get("message", "")
+                linkedin_user_id = msg.get("sender_id", "")
+                
+                if message and linkedin_user_id:
+                    ai_reply = generate_reply(sender_name, message)
+                    send_to_slack(sender_name, "LinkedIn User", message, ai_reply, linkedin_user_id)
+        except Exception as e:
+            logger.error(f"Error in LinkedIn polling: {e}")
+        
+        await asyncio.sleep(120)
 
-@app.post("/webhook/linkedin")
-async def linkedin_webhook(request: Request):
-    payload = await request.json()
-    
-    sender_name = payload.get("sender_name", "Unknown")
-    sender_role = payload.get("sender_role", "unknown")
-    message = payload.get("message", "")
-    linkedin_user_id = payload.get("sender_id", "")
-    
-    if not message or not linkedin_user_id:
-        raise HTTPException(status_code=400, detail="Invalid payload")
-    
-    ai_reply = generate_reply(sender_name, message, sender_role)
-    send_to_slack(sender_name, sender_role, message, ai_reply, linkedin_user_id)
-    
-    return JSONResponse({"status": "success"})
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(poll_linkedin())
+    logger.info("CordLink started - polling LinkedIn every 2 minutes")
 
 @app.post("/slack/interactions")
 async def slack_interactions(request: Request):
-    import json
-    import logging
-    
-    logging.basicConfig(level=logging.INFO)
-    
     try:
         form_data = await request.form()
         payload_str = form_data.get("payload")
-        logging.info(f"Raw payload: {payload_str}")
-        
         payload = json.loads(payload_str)
-        logging.info(f"Parsed payload keys: {payload.keys()}")
         
         action = payload["actions"][0]
         action_id = action["action_id"]
         user = payload["user"].get("username") or payload["user"].get("name")
         response_url = payload["response_url"]
-        
-        logging.info(f"Action: {action_id}, User: {user}")
     except Exception as e:
-        logging.error(f"Error parsing Slack payload: {e}")
+        logger.error(f"Error parsing Slack payload: {e}")
         return JSONResponse({"text": f"エラーが発生しました: {str(e)}"}, status_code=200)
     
     if action_id == "send_original":
@@ -180,8 +227,6 @@ async def slack_interactions(request: Request):
                     "replace_original": False
                 })
             return JSONResponse({"status": "rate_limited"})
-        
-        await send_to_linkedin(linkedin_user_id, message)
         
         async with httpx.AsyncClient() as client:
             await client.post(response_url, json={
@@ -200,8 +245,6 @@ async def slack_interactions(request: Request):
                     "replace_original": False
                 })
             return JSONResponse({"status": "rate_limited"})
-        
-        await send_to_linkedin(linkedin_user_id, edited_message)
         
         async with httpx.AsyncClient() as client:
             await client.post(response_url, json={
@@ -224,4 +267,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    uvicorn.run(app, host="0.0.0.0", port=port)

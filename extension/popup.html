@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 300px;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    h2 {
+      margin: 0 0 15px 0;
+      font-size: 18px;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+    }
+    .active {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .inactive {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #0073b1;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background-color: #005885;
+    }
+    .info {
+      font-size: 12px;
+      color: #666;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+  <h2>LinkedIn Auto Reply</h2>
+  
+  <div class="status active">
+    ✅ Extension Active
+  </div>
+  
+  <button id="testBtn">Test Connection</button>
+  
+  <div class="info">
+    <p><strong>使い方：</strong></p>
+    <ol>
+      <li>LinkedIn メッセージページを開く</li>
+      <li>新規メッセージが自動検知される</li>
+      <li>Slack で承認フローが開始</li>
+    </ol>
+    <p><strong>CordLink URL:</strong><br>http://localhost:8002</p>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
